@@ -1,0 +1,214 @@
+using System;
+using System.IO;
+using System.Net;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Drawing;
+
+public class KeyPressHttpServer : ApplicationContext
+{
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    private readonly HttpListener _listener = new HttpListener();
+    private const int Port = 4664;
+    private readonly string ServerUrl = $"http://+:{Port}/cmd/";
+    private bool _isListening = false;
+
+    private NotifyIcon trayIcon;
+
+    public KeyPressHttpServer()
+    {
+        string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+        Icon icon;
+        try { icon = new Icon(icoPath); } catch { icon = SystemIcons.Application; }
+
+        trayIcon = new NotifyIcon
+        {
+            Icon = icon,
+            ContextMenuStrip = new ContextMenuStrip(),
+            Visible = true,
+            Text = $"Listening on port {Port}"
+        };
+
+        trayIcon.ContextMenuStrip.Items.Add("Listening on " + ServerUrl.Replace("+", "localhost"), null, ShowListeningInfo);
+        trayIcon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
+        trayIcon.ContextMenuStrip.Items.Add("Exit", null, ExitApplication);
+
+        Task.Run(StartListener);
+    }
+
+    private void ShowListeningInfo(object sender, EventArgs e)
+    {
+        MessageBox.Show(
+            $"The HTTP Key Sender is running and listening for requests on:\n\n{ServerUrl.Replace("+", "0.0.0.0")}\n\nExample: http://localhost:{Port}/cmd?key=VolumeDown&mod=S",
+            "Key Sender Service Information",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information
+        );
+    }
+
+    private void ExitApplication(object sender, EventArgs e)
+    {
+        if (_isListening)
+        {
+            try { _listener.Stop(); } catch { }
+            try { _listener.Close(); } catch { }
+            _isListening = false;
+        }
+
+        if (trayIcon != null)
+        {
+            trayIcon.Visible = false;
+            trayIcon.Dispose();
+            trayIcon = null;
+        }
+
+        Application.Exit();
+    }
+
+    private void StartListener()
+    {
+        try
+        {
+            _listener.Prefixes.Add(ServerUrl);
+            _listener.Start();
+            _isListening = true;
+            Console.WriteLine($"Listening for requests on {ServerUrl}");
+
+            while (_listener.IsListening)
+            {
+                HttpListenerContext context = null;
+                try { context = _listener.GetContext(); }
+                catch (HttpListenerException) { break; }
+                catch (ObjectDisposedException) { break; }
+
+                if (context != null)
+                {
+                    Task.Run(() => ProcessRequest(context));
+                }
+            }
+        }
+        catch (HttpListenerException ex) when (ex.ErrorCode == 5)
+        {
+            ShowError($"Failed to start HTTP listener on port {Port}. You may need to run this program as an administrator or configure URL reservations. Error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            if (_isListening)
+            {
+                ShowError($"An error occurred in the listener: {ex.Message}");
+            }
+        }
+        finally
+        {
+            _isListening = false;
+            try { _listener.Close(); } catch { }
+        }
+    }
+
+    private void ProcessRequest(HttpListenerContext context)
+    {
+        try
+        {
+            var query = context.Request.QueryString;
+            string keyName = query["key"];
+            string mod = query["mod"]?.ToUpperInvariant();
+            ushort? modifierVK = GetModifierVK(mod);
+
+            if (string.IsNullOrWhiteSpace(keyName))
+            {
+                SendResponse(context, HttpStatusCode.BadRequest, "Missing 'key' parameter.");
+                return;
+            }
+
+            if (keyName.StartsWith("VK", StringComparison.OrdinalIgnoreCase))
+            {
+                string hexPart = keyName.Substring(2);
+                if (ushort.TryParse(hexPart, System.Globalization.NumberStyles.HexNumber, null, out ushort vkCode))
+                {
+                    SimulateKeyPress(vkCode, modifierVK);
+                    SendResponse(context, HttpStatusCode.OK, $"Raw VK code {keyName} simulated with modifier {mod ?? "none"}.");
+                    Console.WriteLine($"Simulated raw VK: {keyName} ({vkCode}) with modifier {mod ?? "none"}");
+                }
+                else
+                {
+                    SendResponse(context, HttpStatusCode.BadRequest, $"Invalid VK hex code: {keyName}");
+                }
+            }
+            else if (Enum.TryParse(keyName, true, out Keys virtualKey))
+            {
+                SimulateKeyPress((ushort)virtualKey, modifierVK);
+                SendResponse(context, HttpStatusCode.OK, $"Named key {keyName} simulated with modifier {mod ?? "none"}.");
+                Console.WriteLine($"Simulated named key: {keyName} ({virtualKey}) with modifier {mod ?? "none"}");
+            }
+            else
+            {
+                SendResponse(context, HttpStatusCode.BadRequest, $"Unrecognized key: {keyName}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SendResponse(context, HttpStatusCode.InternalServerError, $"Server processing error: {ex.Message}");
+            ShowError($"Request processing error: {ex.Message}");
+        }
+    }
+
+    private void SendResponse(HttpListenerContext context, HttpStatusCode statusCode, string message)
+    {
+        context.Response.StatusCode = (int)statusCode;
+        if (!string.IsNullOrEmpty(message) && statusCode != HttpStatusCode.NoContent)
+        {
+            using (var writer = new StreamWriter(context.Response.OutputStream))
+            {
+                writer.Write(message);
+            }
+        }
+        context.Response.Close();
+    }
+
+    private void ShowError(string message)
+    {
+        if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.InvokeRequired)
+        {
+            trayIcon.ContextMenuStrip.Invoke((MethodInvoker)delegate {
+                MessageBox.Show(message, "Key Sender Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            });
+        }
+        else
+        {
+            MessageBox.Show(message, "Key Sender Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void SimulateKeyPress(ushort vkCode, ushort? modifierVK = null)
+    {
+        if (modifierVK.HasValue)
+        {
+            keybd_event((byte)modifierVK.Value, 0, 0, UIntPtr.Zero); // Modifier down
+        }
+
+        keybd_event((byte)vkCode, 0, 0, UIntPtr.Zero); // Key down
+        keybd_event((byte)vkCode, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Key up
+
+        if (modifierVK.HasValue)
+        {
+            keybd_event((byte)modifierVK.Value, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Modifier up
+        }
+    }
+
+    private ushort? GetModifierVK(string mod)
+    {
+        return mod switch
+        {
+            "S" => 0x10, // VK_SHIFT
+            "C" => 0x11, // VK_CONTROL
+            "A" => 0x12, // VK_MENU (Alt)
+            "W" => 0x5B, // VK_LWIN
+            _ => null
+        };
+    }
+}
