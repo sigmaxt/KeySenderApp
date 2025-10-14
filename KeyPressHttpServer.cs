@@ -5,6 +5,8 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
+using System.Reflection;
+using System.Resources;
 
 public class KeyPressHttpServer : ApplicationContext
 {
@@ -24,7 +26,16 @@ public class KeyPressHttpServer : ApplicationContext
     {
         string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
         Icon icon;
-        try { icon = new Icon(icoPath); } catch { icon = SystemIcons.Application; }
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            using Stream iconStream = assembly.GetManifestResourceStream("KeySenderApp.icon.ico");
+            icon = new Icon(iconStream);
+        }
+        catch
+        {
+            icon = SystemIcons.Application;
+        }
 
         trayIcon = new NotifyIcon
         {
@@ -174,7 +185,8 @@ public class KeyPressHttpServer : ApplicationContext
     {
         if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.InvokeRequired)
         {
-            trayIcon.ContextMenuStrip.Invoke((MethodInvoker)delegate {
+            trayIcon.ContextMenuStrip.Invoke((System.Windows.Forms.MethodInvoker)delegate
+            {
                 MessageBox.Show(message, "Key Sender Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             });
         }

@@ -7,7 +7,13 @@
   </PropertyGroup>
   <ItemGroup>
   <None Update="icon.ico">
-    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    <LogicalName>AppIcon</LogicalName>
   </None>
+</ItemGroup>
+<ItemGroup>
+  <EmbeddedResource Include="icon.ico">
+    <LogicalName>KeySenderApp.icon.ico</LogicalName>
+  </EmbeddedResource>
 </ItemGroup>
 </Project>
