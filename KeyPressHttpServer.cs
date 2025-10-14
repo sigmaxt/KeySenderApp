@@ -17,7 +17,15 @@ public class KeyPressHttpServer : ApplicationContext
 
     private readonly HttpListener _listener = new HttpListener();
     private const int Port = 4664;
-    private readonly string ServerUrl = $"http://+:{Port}/cmd/";
+
+    // CHANGED: now defines multiple specific addresses instead of +
+    private readonly string[] ServerUrls = new string[]
+    {
+        $"http://192.168.1.101:{Port}/cmd/",
+        $"http://localhost:{Port}/cmd/",
+        $"http://127.0.0.1:{Port}/cmd/"
+    };
+
     private bool _isListening = false;
 
     private NotifyIcon trayIcon;
@@ -45,7 +53,8 @@ public class KeyPressHttpServer : ApplicationContext
             Text = $"Listening on port {Port}"
         };
 
-        trayIcon.ContextMenuStrip.Items.Add("Listening on " + ServerUrl.Replace("+", "localhost"), null, ShowListeningInfo);
+        // Updated to show all specific URLs instead of +
+        trayIcon.ContextMenuStrip.Items.Add("Listening on:\n" + string.Join("\n", ServerUrls), null, ShowListeningInfo);
         trayIcon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
         trayIcon.ContextMenuStrip.Items.Add("Exit", null, ExitApplication);
 
@@ -55,7 +64,9 @@ public class KeyPressHttpServer : ApplicationContext
     private void ShowListeningInfo(object sender, EventArgs e)
     {
         MessageBox.Show(
-            $"The HTTP Key Sender is running and listening for requests on:\n\n{ServerUrl.Replace("+", "0.0.0.0")}\n\nExample: http://localhost:{Port}/cmd?key=VolumeDown&mod=S",
+            "The HTTP Key Sender is running and listening for requests on:\n\n" +
+            string.Join("\n", ServerUrls) +
+            $"\n\nExample: http://localhost:{Port}/cmd?key=VolumeDown&mod=S",
             "Key Sender Service Information",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information
@@ -85,10 +96,14 @@ public class KeyPressHttpServer : ApplicationContext
     {
         try
         {
-            _listener.Prefixes.Add(ServerUrl);
+            // CHANGED: add all desired prefixes
+            foreach (var url in ServerUrls)
+                _listener.Prefixes.Add(url);
+
             _listener.Start();
             _isListening = true;
-            Console.WriteLine($"Listening for requests on {ServerUrl}");
+            Console.WriteLine("Listening for requests on:");
+            foreach (var url in ServerUrls) Console.WriteLine(url);
 
             while (_listener.IsListening)
             {
