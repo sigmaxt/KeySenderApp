@@ -66,7 +66,7 @@ public class KeyPressHttpServer : ApplicationContext
         MessageBox.Show(
             "The HTTP Key Sender is running and listening for requests on:\n\n" +
             string.Join("\n", ServerUrls) +
-            $"\n\nExample: http://localhost:{Port}/cmd?key=VolumeDown&mod=S",
+            $"\n\nExample: http://localhost:{Port}/cmd?key=VKC1&mod=S",
             "Key Sender Service Information",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information
