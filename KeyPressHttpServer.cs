@@ -7,13 +7,25 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.Reflection;
 using System.Resources;
+using System.Collections.Generic;
 
 public class KeyPressHttpServer : ApplicationContext
 {
     [DllImport("user32.dll", SetLastError = true)]
     static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
-    private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    private readonly HashSet<Keys> activeModifiers = new();
+    private static readonly Dictionary<string, Keys> modifierMap = new()
+    {
+        { "Ctrl", Keys.ControlKey },
+        { "Shift", Keys.ShiftKey },
+        { "Alt", Keys.Menu },
+        { "LWin", Keys.LWin },
+        { "RWin", Keys.RWin }
+    };
+
 
     private readonly HttpListener _listener = new HttpListener();
     private const int Port = 4664;
@@ -136,6 +148,66 @@ public class KeyPressHttpServer : ApplicationContext
         }
     }
 
+private void ExecuteMacro(string rawMacro)
+{
+    string decoded = WebUtility.UrlDecode(rawMacro);
+    var tokens = System.Text.RegularExpressions.Regex.Matches(decoded, @"\{.*?\}|.");
+
+    foreach (System.Text.RegularExpressions.Match token in tokens)
+    {
+        string part = token.Value;
+
+        if (part.StartsWith("{") && part.EndsWith("}"))
+        {
+            string content = part.Substring(1, part.Length - 2);
+            string[] pieces = content.Split(' ');
+
+            if (pieces.Length == 2 && (string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase) || string.Equals(pieces[1], "Up", StringComparison.OrdinalIgnoreCase)))
+            {
+                string modName = pieces[0];
+                if (modifierMap.TryGetValue(modName, out Keys modKey))
+                {
+                    bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
+                    keybd_event((byte)modKey, 0, isDown ? 0 : KEYEVENTF_KEYUP, UIntPtr.Zero);
+
+                    if (isDown) activeModifiers.Add(modKey);
+                    else activeModifiers.Remove(modKey);
+                }
+                else
+                {
+                    Keys key = ParseKey(modName);
+                    bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
+                    keybd_event((byte)key, 0, isDown ? 0 : KEYEVENTF_KEYUP, UIntPtr.Zero);
+                }
+            }
+            else
+            {
+                Keys key = ParseKey(content);
+                foreach (var mod in activeModifiers)
+                    keybd_event((byte)mod, 0, 0, UIntPtr.Zero); // Modifier down
+
+                keybd_event((byte)key, 0, 0, UIntPtr.Zero);
+                keybd_event((byte)key, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+
+                foreach (var mod in activeModifiers)
+                    keybd_event((byte)mod, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Modifier up
+            }
+        }
+        else
+        {
+            SendKeys.SendWait(part);
+        }
+    }
+
+    activeModifiers.Clear(); // Clean up
+}
+
+
+    private Keys ParseKey(string name)
+    {
+        return Enum.TryParse(name, true, out Keys key) ? key : Keys.None;
+    }
+
     private void ProcessRequest(HttpListenerContext context)
     {
         try
@@ -143,7 +215,24 @@ public class KeyPressHttpServer : ApplicationContext
             var query = context.Request.QueryString;
             string keyName = query["key"];
             string mod = query["mod"]?.ToUpperInvariant();
+            string macro = query["macro"];
+            string typeText = query["type"];
             ushort? modifierVK = GetModifierVK(mod);
+            if (!string.IsNullOrEmpty(macro))
+            {
+                ExecuteMacro(macro);
+                SendResponse(context, HttpStatusCode.OK, $"Macro executed: {macro}");
+                Console.WriteLine($"Executed macro: {macro}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(typeText))
+            {
+                SendKeys.SendWait(typeText);
+                SendResponse(context, HttpStatusCode.OK, $"Typed text: {typeText}");
+                Console.WriteLine($"Typed text: {typeText}");
+                return;
+            }
 
             if (string.IsNullOrWhiteSpace(keyName))
             {
