@@ -8,13 +8,69 @@ using System.Drawing;
 using System.Reflection;
 using System.Resources;
 using System.Collections.Generic;
+using System.Threading;
 
 public class KeyPressHttpServer : ApplicationContext
 {
     [DllImport("user32.dll", SetLastError = true)]
     static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
-        private const uint KEYEVENTF_KEYUP = 0x0002;
+    [DllImport("user32.dll")]
+    static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT
+    {
+        public uint type;
+        public InputUnion u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct InputUnion
+    {
+        [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
+    private const uint INPUT_KEYBOARD = 1;
+
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
 
     private readonly HashSet<Keys> activeModifiers = new();
     private static readonly Dictionary<string, Keys> modifierMap = new()
@@ -44,12 +100,12 @@ public class KeyPressHttpServer : ApplicationContext
 
     public KeyPressHttpServer()
     {
-        string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+        string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "VKsender.icon.ico");
         Icon icon;
         try
         {
             var assembly = Assembly.GetExecutingAssembly();
-            using Stream iconStream = assembly.GetManifestResourceStream("KeySenderApp.icon.ico");
+            using Stream iconStream = assembly.GetManifestResourceStream("VKsender.icon.ico");
             icon = new Icon(iconStream);
         }
         catch
@@ -151,7 +207,13 @@ public class KeyPressHttpServer : ApplicationContext
 private void ExecuteMacro(string rawMacro)
 {
     string decoded = WebUtility.UrlDecode(rawMacro);
-    var tokens = System.Text.RegularExpressions.Regex.Matches(decoded, @"\{.*?\}|.");
+    var tokens = System.Text.RegularExpressions.Regex.Matches(decoded, @"\{.*?\}|
+
+\[.*?\]
+
+|.");
+
+    HashSet<Keys> heldModifiers = new();
 
     foreach (System.Text.RegularExpressions.Match token in tokens)
     {
@@ -162,45 +224,173 @@ private void ExecuteMacro(string rawMacro)
             string content = part.Substring(1, part.Length - 2);
             string[] pieces = content.Split(' ');
 
-            if (pieces.Length == 2 && (string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase) || string.Equals(pieces[1], "Up", StringComparison.OrdinalIgnoreCase)))
+            if (pieces.Length == 2 &&
+                (string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(pieces[1], "Up", StringComparison.OrdinalIgnoreCase)))
             {
                 string modName = pieces[0];
+                bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
+
                 if (modifierMap.TryGetValue(modName, out Keys modKey))
                 {
-                    bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
-                    keybd_event((byte)modKey, 0, isDown ? 0 : KEYEVENTF_KEYUP, UIntPtr.Zero);
-
-                    if (isDown) activeModifiers.Add(modKey);
-                    else activeModifiers.Remove(modKey);
+                    QueueKey(modKey, isDown);
+                    if (isDown) heldModifiers.Add(modKey);
+                    else heldModifiers.Remove(modKey);
                 }
                 else
                 {
-                    Keys key = ParseKey(modName);
-                    bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
-                    keybd_event((byte)key, 0, isDown ? 0 : KEYEVENTF_KEYUP, UIntPtr.Zero);
+                    Keys parsedKey = ParseKey(modName);
+                    QueueKey(parsedKey, isDown);
                 }
             }
             else
             {
-                Keys key = ParseKey(content);
-                foreach (var mod in activeModifiers)
-                    keybd_event((byte)mod, 0, 0, UIntPtr.Zero); // Modifier down
+                Keys parsedKey = ParseKey(content);
+                QueueKey(parsedKey, true);
+                QueueKey(parsedKey, false);
+            }
+        }
+        else if (part.StartsWith("[") && part.EndsWith("]"))
+        {
+            // Send literal block through the SendInput queue so spaces are handled correctly.
+            string literal = part.Substring(1, part.Length - 2);
 
-                keybd_event((byte)key, 0, 0, UIntPtr.Zero);
-                keybd_event((byte)key, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            foreach (char ch in literal)
+            {
+                if (ch == ' ')
+                {
+                    QueueKey(Keys.Space, true);
+                    QueueKey(Keys.Space, false);
+                    continue;
+                }
 
-                foreach (var mod in activeModifiers)
-                    keybd_event((byte)mod, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Modifier up
+                // Attempt to map printable character to a Keys value
+                string s = ch.ToString();
+                Keys parsedKey = ParseKey(s);
+
+                // If ParseKey failed, try upper-case mapping for letters
+                if (parsedKey == Keys.None && char.IsLetter(ch))
+                {
+                    parsedKey = ParseKey(s.ToUpperInvariant());
+                }
+
+                // If still None, fall back to ASCII-to-key mapping for common characters
+                if (parsedKey == Keys.None)
+                {
+                    switch (ch)
+                    {
+                        case '.': parsedKey = Keys.OemPeriod; break;
+                        case ',': parsedKey = Keys.Oemcomma; break;
+                        case ';': parsedKey = Keys.Oem1; break;
+                        case ':': parsedKey = Keys.Oem1; break;
+                        case '/': parsedKey = Keys.Oem2; break;
+                        case '?': parsedKey = Keys.Oem2; break;
+                        case '\\': parsedKey = Keys.Oem5; break;
+                        case '-': parsedKey = Keys.OemMinus; break;
+                        case '_': parsedKey = Keys.OemMinus; break;
+                        case '=': parsedKey = Keys.Oemplus; break;
+                        case '+': parsedKey = Keys.Oemplus; break;
+                        case '\'': parsedKey = Keys.Oem7; break;
+                        case '"': parsedKey = Keys.Oem7; break;
+                        case '[': parsedKey = Keys.Oem4; break;
+                        case ']': parsedKey = Keys.Oem6; break;
+                        case '`': parsedKey = Keys.Oem3; break;
+                        case '~': parsedKey = Keys.Oem3; break;
+                        case '!': parsedKey = Keys.D1; break;
+                        case '@': parsedKey = Keys.D2; break;
+                        case '#': parsedKey = Keys.D3; break;
+                        case '$': parsedKey = Keys.D4; break;
+                        case '%': parsedKey = Keys.D5; break;
+                        case '^': parsedKey = Keys.D6; break;
+                        case '&': parsedKey = Keys.D7; break;
+                        case '*': parsedKey = Keys.D8; break;
+                        case '(': parsedKey = Keys.D9; break;
+                        case ')': parsedKey = Keys.D0; break;
+                        case '0': parsedKey = Keys.D0; break;
+                        case '1': parsedKey = Keys.D1; break;
+                        case '2': parsedKey = Keys.D2; break;
+                        case '3': parsedKey = Keys.D3; break;
+                        case '4': parsedKey = Keys.D4; break;
+                        case '5': parsedKey = Keys.D5; break;
+                        case '6': parsedKey = Keys.D6; break;
+                        case '7': parsedKey = Keys.D7; break;
+                        case '8': parsedKey = Keys.D8; break;
+                        case '9': parsedKey = Keys.D9; break;
+                    }
+                }
+
+                if (parsedKey == Keys.None)
+                {
+                    // As a last resort, skip unknown characters to avoid sending invalid codes.
+                    Console.WriteLine($"[ExecuteMacro] Skipping unsupported literal character: '{ch}' (0x{((int)ch):X})");
+                    continue;
+                }
+
+                // For letters and shifted characters you may need to send shift down/up around the key,
+                // but if the target expects case-sensitive input you can rely on existing modifier logic.
+                QueueKey(parsedKey, true);
+                QueueKey(parsedKey, false);
             }
         }
         else
         {
-            SendKeys.SendWait(part);
+            Keys parsedKey = ParseKey(part);
+            QueueKey(parsedKey, true);
+            QueueKey(parsedKey, false);
         }
     }
 
-    activeModifiers.Clear(); // Clean up
+    FlushInputQueue();
 }
+
+
+
+    private List<INPUT> inputQueue = new();
+
+private void QueueKey(Keys key, bool isDown)
+{
+    ushort scanCode = (ushort)MapVirtualKey((uint)key, 0);
+
+    uint flags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
+
+    // Add extended flag for arrow keys and others
+    if (key == Keys.Up || key == Keys.Down || key == Keys.Left || key == Keys.Right ||
+        key == Keys.Home || key == Keys.End || key == Keys.Insert || key == Keys.Delete ||
+        key == Keys.PageUp || key == Keys.PageDown)
+    {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+
+    INPUT input = new INPUT
+    {
+        type = INPUT_KEYBOARD,
+        u = new InputUnion
+        {
+            ki = new KEYBDINPUT
+            {
+                wVk = 0,
+                wScan = scanCode,
+                dwFlags = flags,
+                time = 0,
+                dwExtraInfo = UIntPtr.Zero
+            }
+        }
+    };
+
+    inputQueue.Add(input);
+}
+
+
+
+    private void FlushInputQueue()
+    {
+        if (inputQueue.Count > 0)
+        {
+            uint result = SendInput((uint)inputQueue.Count, inputQueue.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+            Console.WriteLine($"[FlushInputQueue] Sent {inputQueue.Count} events, result: {result}");
+            inputQueue.Clear();
+        }
+    }
 
 
     private Keys ParseKey(string name)

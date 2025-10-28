@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>VKsender.icon.ico</ApplicationIcon>
+	<AssemblyName>VKsender</AssemblyName>
+	<RootNamespace>VKsender</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+<None Update="VKsender.icon.ico">
+  <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+  <LogicalName>AppIcon</LogicalName>
+</None>
+</ItemGroup>
+<ItemGroup>
+	<EmbeddedResource Include="VKsender.icon.ico">
+	<LogicalName>VKsender.icon.ico</LogicalName>
+	</EmbeddedResource>
+</ItemGroup>
+</Project>
