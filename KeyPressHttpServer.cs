@@ -204,181 +204,181 @@ public class KeyPressHttpServer : ApplicationContext
         }
     }
 
-private void ExecuteMacro(string rawMacro)
-{
-    string decoded = WebUtility.UrlDecode(rawMacro);
-    var tokens = System.Text.RegularExpressions.Regex.Matches(decoded, @"\{.*?\}|
+    private void ExecuteMacro(string rawMacro)
+    {
+        string decoded = WebUtility.UrlDecode(rawMacro);
+        var tokens = System.Text.RegularExpressions.Regex.Matches(decoded, @"\{.*?\}|
 
 \[.*?\]
 
 |.");
 
-    HashSet<Keys> heldModifiers = new();
+        HashSet<Keys> heldModifiers = new();
 
-    foreach (System.Text.RegularExpressions.Match token in tokens)
-    {
-        string part = token.Value;
-
-        if (part.StartsWith("{") && part.EndsWith("}"))
+        foreach (System.Text.RegularExpressions.Match token in tokens)
         {
-            string content = part.Substring(1, part.Length - 2);
-            string[] pieces = content.Split(' ');
+            string part = token.Value;
 
-            if (pieces.Length == 2 &&
-                (string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(pieces[1], "Up", StringComparison.OrdinalIgnoreCase)))
+            if (part.StartsWith("{") && part.EndsWith("}"))
             {
-                string modName = pieces[0];
-                bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
+                string content = part.Substring(1, part.Length - 2);
+                string[] pieces = content.Split(' ');
 
-                if (modifierMap.TryGetValue(modName, out Keys modKey))
+                if (pieces.Length == 2 &&
+                    (string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(pieces[1], "Up", StringComparison.OrdinalIgnoreCase)))
                 {
-                    QueueKey(modKey, isDown);
-                    if (isDown) heldModifiers.Add(modKey);
-                    else heldModifiers.Remove(modKey);
+                    string modName = pieces[0];
+                    bool isDown = string.Equals(pieces[1], "Down", StringComparison.OrdinalIgnoreCase);
+
+                    if (modifierMap.TryGetValue(modName, out Keys modKey))
+                    {
+                        QueueKey(modKey, isDown);
+                        if (isDown) heldModifiers.Add(modKey);
+                        else heldModifiers.Remove(modKey);
+                    }
+                    else
+                    {
+                        Keys parsedKey = ParseKey(modName);
+                        QueueKey(parsedKey, isDown);
+                    }
                 }
                 else
                 {
-                    Keys parsedKey = ParseKey(modName);
-                    QueueKey(parsedKey, isDown);
+                    Keys parsedKey = ParseKey(content);
+                    QueueKey(parsedKey, true);
+                    QueueKey(parsedKey, false);
+                }
+            }
+            else if (part.StartsWith("[") && part.EndsWith("]"))
+            {
+                // Send literal block through the SendInput queue so spaces are handled correctly.
+                string literal = part.Substring(1, part.Length - 2);
+
+                foreach (char ch in literal)
+                {
+                    if (ch == ' ')
+                    {
+                        QueueKey(Keys.Space, true);
+                        QueueKey(Keys.Space, false);
+                        continue;
+                    }
+
+                    // Attempt to map printable character to a Keys value
+                    string s = ch.ToString();
+                    Keys parsedKey = ParseKey(s);
+
+                    // If ParseKey failed, try upper-case mapping for letters
+                    if (parsedKey == Keys.None && char.IsLetter(ch))
+                    {
+                        parsedKey = ParseKey(s.ToUpperInvariant());
+                    }
+
+                    // If still None, fall back to ASCII-to-key mapping for common characters
+                    if (parsedKey == Keys.None)
+                    {
+                        switch (ch)
+                        {
+                            case '.': parsedKey = Keys.OemPeriod; break;
+                            case ',': parsedKey = Keys.Oemcomma; break;
+                            case ';': parsedKey = Keys.Oem1; break;
+                            case ':': parsedKey = Keys.Oem1; break;
+                            case '/': parsedKey = Keys.Oem2; break;
+                            case '?': parsedKey = Keys.Oem2; break;
+                            case '\\': parsedKey = Keys.Oem5; break;
+                            case '-': parsedKey = Keys.OemMinus; break;
+                            case '_': parsedKey = Keys.OemMinus; break;
+                            case '=': parsedKey = Keys.Oemplus; break;
+                            case '+': parsedKey = Keys.Oemplus; break;
+                            case '\'': parsedKey = Keys.Oem7; break;
+                            case '"': parsedKey = Keys.Oem7; break;
+                            case '[': parsedKey = Keys.Oem4; break;
+                            case ']': parsedKey = Keys.Oem6; break;
+                            case '`': parsedKey = Keys.Oem3; break;
+                            case '~': parsedKey = Keys.Oem3; break;
+                            case '!': parsedKey = Keys.D1; break;
+                            case '@': parsedKey = Keys.D2; break;
+                            case '#': parsedKey = Keys.D3; break;
+                            case '$': parsedKey = Keys.D4; break;
+                            case '%': parsedKey = Keys.D5; break;
+                            case '^': parsedKey = Keys.D6; break;
+                            case '&': parsedKey = Keys.D7; break;
+                            case '*': parsedKey = Keys.D8; break;
+                            case '(': parsedKey = Keys.D9; break;
+                            case ')': parsedKey = Keys.D0; break;
+                            case '0': parsedKey = Keys.D0; break;
+                            case '1': parsedKey = Keys.D1; break;
+                            case '2': parsedKey = Keys.D2; break;
+                            case '3': parsedKey = Keys.D3; break;
+                            case '4': parsedKey = Keys.D4; break;
+                            case '5': parsedKey = Keys.D5; break;
+                            case '6': parsedKey = Keys.D6; break;
+                            case '7': parsedKey = Keys.D7; break;
+                            case '8': parsedKey = Keys.D8; break;
+                            case '9': parsedKey = Keys.D9; break;
+                        }
+                    }
+
+                    if (parsedKey == Keys.None)
+                    {
+                        // As a last resort, skip unknown characters to avoid sending invalid codes.
+                        Console.WriteLine($"[ExecuteMacro] Skipping unsupported literal character: '{ch}' (0x{((int)ch):X})");
+                        continue;
+                    }
+
+                    // For letters and shifted characters you may need to send shift down/up around the key,
+                    // but if the target expects case-sensitive input you can rely on existing modifier logic.
+                    QueueKey(parsedKey, true);
+                    QueueKey(parsedKey, false);
                 }
             }
             else
             {
-                Keys parsedKey = ParseKey(content);
+                Keys parsedKey = ParseKey(part);
                 QueueKey(parsedKey, true);
                 QueueKey(parsedKey, false);
             }
         }
-        else if (part.StartsWith("[") && part.EndsWith("]"))
-        {
-            // Send literal block through the SendInput queue so spaces are handled correctly.
-            string literal = part.Substring(1, part.Length - 2);
 
-            foreach (char ch in literal)
-            {
-                if (ch == ' ')
-                {
-                    QueueKey(Keys.Space, true);
-                    QueueKey(Keys.Space, false);
-                    continue;
-                }
-
-                // Attempt to map printable character to a Keys value
-                string s = ch.ToString();
-                Keys parsedKey = ParseKey(s);
-
-                // If ParseKey failed, try upper-case mapping for letters
-                if (parsedKey == Keys.None && char.IsLetter(ch))
-                {
-                    parsedKey = ParseKey(s.ToUpperInvariant());
-                }
-
-                // If still None, fall back to ASCII-to-key mapping for common characters
-                if (parsedKey == Keys.None)
-                {
-                    switch (ch)
-                    {
-                        case '.': parsedKey = Keys.OemPeriod; break;
-                        case ',': parsedKey = Keys.Oemcomma; break;
-                        case ';': parsedKey = Keys.Oem1; break;
-                        case ':': parsedKey = Keys.Oem1; break;
-                        case '/': parsedKey = Keys.Oem2; break;
-                        case '?': parsedKey = Keys.Oem2; break;
-                        case '\\': parsedKey = Keys.Oem5; break;
-                        case '-': parsedKey = Keys.OemMinus; break;
-                        case '_': parsedKey = Keys.OemMinus; break;
-                        case '=': parsedKey = Keys.Oemplus; break;
-                        case '+': parsedKey = Keys.Oemplus; break;
-                        case '\'': parsedKey = Keys.Oem7; break;
-                        case '"': parsedKey = Keys.Oem7; break;
-                        case '[': parsedKey = Keys.Oem4; break;
-                        case ']': parsedKey = Keys.Oem6; break;
-                        case '`': parsedKey = Keys.Oem3; break;
-                        case '~': parsedKey = Keys.Oem3; break;
-                        case '!': parsedKey = Keys.D1; break;
-                        case '@': parsedKey = Keys.D2; break;
-                        case '#': parsedKey = Keys.D3; break;
-                        case '$': parsedKey = Keys.D4; break;
-                        case '%': parsedKey = Keys.D5; break;
-                        case '^': parsedKey = Keys.D6; break;
-                        case '&': parsedKey = Keys.D7; break;
-                        case '*': parsedKey = Keys.D8; break;
-                        case '(': parsedKey = Keys.D9; break;
-                        case ')': parsedKey = Keys.D0; break;
-                        case '0': parsedKey = Keys.D0; break;
-                        case '1': parsedKey = Keys.D1; break;
-                        case '2': parsedKey = Keys.D2; break;
-                        case '3': parsedKey = Keys.D3; break;
-                        case '4': parsedKey = Keys.D4; break;
-                        case '5': parsedKey = Keys.D5; break;
-                        case '6': parsedKey = Keys.D6; break;
-                        case '7': parsedKey = Keys.D7; break;
-                        case '8': parsedKey = Keys.D8; break;
-                        case '9': parsedKey = Keys.D9; break;
-                    }
-                }
-
-                if (parsedKey == Keys.None)
-                {
-                    // As a last resort, skip unknown characters to avoid sending invalid codes.
-                    Console.WriteLine($"[ExecuteMacro] Skipping unsupported literal character: '{ch}' (0x{((int)ch):X})");
-                    continue;
-                }
-
-                // For letters and shifted characters you may need to send shift down/up around the key,
-                // but if the target expects case-sensitive input you can rely on existing modifier logic.
-                QueueKey(parsedKey, true);
-                QueueKey(parsedKey, false);
-            }
-        }
-        else
-        {
-            Keys parsedKey = ParseKey(part);
-            QueueKey(parsedKey, true);
-            QueueKey(parsedKey, false);
-        }
+        FlushInputQueue();
     }
-
-    FlushInputQueue();
-}
 
 
 
     private List<INPUT> inputQueue = new();
 
-private void QueueKey(Keys key, bool isDown)
-{
-    ushort scanCode = (ushort)MapVirtualKey((uint)key, 0);
-
-    uint flags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
-
-    // Add extended flag for arrow keys and others
-    if (key == Keys.Up || key == Keys.Down || key == Keys.Left || key == Keys.Right ||
-        key == Keys.Home || key == Keys.End || key == Keys.Insert || key == Keys.Delete ||
-        key == Keys.PageUp || key == Keys.PageDown)
+    private void QueueKey(Keys key, bool isDown)
     {
-        flags |= KEYEVENTF_EXTENDEDKEY;
-    }
+        ushort scanCode = (ushort)MapVirtualKey((uint)key, 0);
 
-    INPUT input = new INPUT
-    {
-        type = INPUT_KEYBOARD,
-        u = new InputUnion
+        uint flags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
+
+        // Add extended flag for arrow keys and others
+        if (key == Keys.Up || key == Keys.Down || key == Keys.Left || key == Keys.Right ||
+            key == Keys.Home || key == Keys.End || key == Keys.Insert || key == Keys.Delete ||
+            key == Keys.PageUp || key == Keys.PageDown)
         {
-            ki = new KEYBDINPUT
-            {
-                wVk = 0,
-                wScan = scanCode,
-                dwFlags = flags,
-                time = 0,
-                dwExtraInfo = UIntPtr.Zero
-            }
+            flags |= KEYEVENTF_EXTENDEDKEY;
         }
-    };
 
-    inputQueue.Add(input);
-}
+        INPUT input = new INPUT
+        {
+            type = INPUT_KEYBOARD,
+            u = new InputUnion
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = 0,
+                    wScan = scanCode,
+                    dwFlags = flags,
+                    time = 0,
+                    dwExtraInfo = UIntPtr.Zero
+                }
+            }
+        };
+
+        inputQueue.Add(input);
+    }
 
 
 
