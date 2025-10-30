@@ -129,17 +129,20 @@ public class KeyPressHttpServer : ApplicationContext
         Task.Run(StartListener);
     }
 
-    private void ShowListeningInfo(object sender, EventArgs e)
-    {
-        MessageBox.Show(
-            "The HTTP Key Sender is running and listening for requests on:\n\n" +
-            string.Join("\n", ServerUrls) +
-            $"\n\nExample: http://localhost:{Port}/cmd?key=VKC1&mod=S",
-            "Key Sender Service Information",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information
-        );
-    }
+private void ShowListeningInfo(object sender, EventArgs e)
+{
+    MessageBox.Show(
+        "The HTTP Key Sender is running and listening for requests on:\n" +
+        string.Join("\n", ServerUrls) +
+        $"\n\nExamples:\n" +
+        $"  http://localhost:{Port}/cmd?key=VKC1&mod=S\n" +
+        $"  http://localhost:{Port}/cmd?macro={{Shift Down}}{{Ctrl Down}}{{Escape}}{{Shift Up}}{{Ctrl Up}}\n" +
+        $"  http://localhost:{Port}/cmd?macro=This{{Space}}is{{Space}}Text",
+        "Key Sender Service Information",
+        MessageBoxButtons.OK,
+        MessageBoxIcon.Information
+    );
+}
 
     private void ExitApplication(object sender, EventArgs e)
     {
