@@ -129,20 +129,20 @@ public class KeyPressHttpServer : ApplicationContext
         Task.Run(StartListener);
     }
 
-private void ShowListeningInfo(object sender, EventArgs e)
-{
-    MessageBox.Show(
-        "The HTTP Key Sender is running and listening for requests on:\n" +
-        string.Join("\n", ServerUrls) +
-        $"\n\nExamples:\n" +
-        $"  http://localhost:{Port}/cmd?key=VKC1&mod=S\n" +
-        $"  http://localhost:{Port}/cmd?macro={{Shift Down}}{{Ctrl Down}}{{Escape}}{{Shift Up}}{{Ctrl Up}}\n" +
-        $"  http://localhost:{Port}/cmd?macro=This{{Space}}is{{Space}}Text",
-        "Key Sender Service Information",
-        MessageBoxButtons.OK,
-        MessageBoxIcon.Information
-    );
-}
+    private void ShowListeningInfo(object sender, EventArgs e)
+    {
+        MessageBox.Show(
+            "The HTTP Key Sender is running and listening for requests on:\n" +
+            string.Join("\n", ServerUrls) +
+            $"\n\nExamples:\n" +
+            $"  http://localhost:{Port}/cmd?key=VKC1&mod=S\n" +
+            $"  http://localhost:{Port}/cmd?macro={{Shift Down}}{{Ctrl Down}}{{Escape}}{{Shift Up}}{{Ctrl Up}}\n" +
+            $"  http://localhost:{Port}/cmd?macro=This{{Space}}is{{Space}}Text",
+            "Key Sender Service Information",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information
+        );
+    }
 
     private void ExitApplication(object sender, EventArgs e)
     {
@@ -350,50 +350,54 @@ private void ShowListeningInfo(object sender, EventArgs e)
 
     private List<INPUT> inputQueue = new();
 
-    private void QueueKey(Keys key, bool isDown)
+private void QueueKey(Keys key, bool isDown)
+{
+    // Queue all keys, including special ones like Pause and Win
+    inputQueue.Add(new INPUT
     {
-        ushort scanCode = (ushort)MapVirtualKey((uint)key, 0);
-
-        uint flags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
-
-        // Add extended flag for arrow keys and others
-        if (key == Keys.Up || key == Keys.Down || key == Keys.Left || key == Keys.Right ||
-            key == Keys.Home || key == Keys.End || key == Keys.Insert || key == Keys.Delete ||
-            key == Keys.PageUp || key == Keys.PageDown)
+        type = INPUT_KEYBOARD,
+        u = new InputUnion
         {
-            flags |= KEYEVENTF_EXTENDEDKEY;
-        }
-
-        INPUT input = new INPUT
-        {
-            type = INPUT_KEYBOARD,
-            u = new InputUnion
+            ki = new KEYBDINPUT
             {
-                ki = new KEYBDINPUT
-                {
-                    wVk = 0,
-                    wScan = scanCode,
-                    dwFlags = flags,
-                    time = 0,
-                    dwExtraInfo = UIntPtr.Zero
-                }
+                wVk = (ushort)key,
+                wScan = 0,
+                dwFlags = isDown ? 0 : KEYEVENTF_KEYUP,
+                time = 0,
+                dwExtraInfo = UIntPtr.Zero
             }
-        };
+        }
+    });
+}
 
-        inputQueue.Add(input);
-    }
-
-
-
-    private void FlushInputQueue()
+private void FlushInputQueue()
+{
+    foreach (var input in inputQueue)
     {
-        if (inputQueue.Count > 0)
+        ushort vk = input.u.ki.wVk;
+        uint flags = input.u.ki.dwFlags;
+
+        // Special handling for Pause
+        if (vk == 0x13) // VK_PAUSE
         {
-            uint result = SendInput((uint)inputQueue.Count, inputQueue.ToArray(), Marshal.SizeOf(typeof(INPUT)));
-            Console.WriteLine($"[FlushInputQueue] Sent {inputQueue.Count} events, result: {result}");
-            inputQueue.Clear();
+            keybd_event((byte)vk, 0x45, flags, UIntPtr.Zero);
+        }
+        // Special handling for LWin and RWin
+        else if (vk == 0x5B || vk == 0x5C) // VK_LWIN or VK_RWIN
+        {
+            keybd_event((byte)vk, 0, flags, UIntPtr.Zero);
+        }
+        else
+        {
+            // Use SendInput for all other keys
+            INPUT[] singleInput = new[] { input };
+            SendInput(1, singleInput, Marshal.SizeOf(typeof(INPUT)));
         }
     }
+
+    Console.WriteLine($"[FlushInputQueue] Sent {inputQueue.Count} events");
+    inputQueue.Clear();
+}
 
 
     private Keys ParseKey(string name)
